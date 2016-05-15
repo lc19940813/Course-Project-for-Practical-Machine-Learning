@@ -1,0 +1,192 @@
+---
+title: "Course Project for Practical Machine Learning"
+author: "Chao Liu"
+date: "05/2016"
+---
+
+##Overview
+In this project, we will explore the factors that determine the performance of barbell lifts according to several practical machine learning algorithms. From the results generated from the training data and its derived validation data, we can predict the performance with incredible accuracy. The error rate is almost 0, and when I apply it to the test data, all the 20 predictions are correct.
+
+##Getting and Cleaning Data
+
+###Loading Libraries and Getting Data
+
+During this project, we will use the Caret package to do all the machine learning tricks for us.  Moreover, according to the data resource in the apprendix, we can directly download them from the given URL.  
+```{r, eval=FALSE}
+library(caret)
+trainingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+path <- "F://Data Science//×÷Òµ//Practical Machine Learning"
+download.file(url = trainingUrl, destfile = paste(path, "//training.csv", sep = ""))
+download.file(url = testingUrl, destfile = paste(path, "//testing.csv", sep = ""))
+```
+
+###Data Slicing
+```{r,eval=FALSE}
+set.seed(123456) #For the reproducible purpose
+training <- read.csv(paste(path, "//training.csv", sep = ""))
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+training <- training[inTrain, ]
+validation <- training[-inTrain, ]
+testing <- read.csv(paste(path, "//testing.csv", sep = ""))
+```
+
+Here we will use 30% data from the training dataset as the validation data to test our out sample error. We also set the random seed for reproducible data partition.
+
+###Cleaning Data
+
+####Remove some unrelated varible
+After use names() directive to see the names of our variables, it's quite obvious that the varibles whose name contains "timestamp", X and "window" is relatively useless in our prediction. Moreover, if we draw the graphs about "timestamp", we will find it is highly volatile which indicates our deletion of these variable might increase our predict power.  
+```{r, eval = FALSE}
+rm_train <- grepl("^X|timestamp|window",names(training))
+rm_valid <- grepl("^X|timestamp|window",names(validation))
+rm_test <- grepl("^X|timestamp|window",names(testing))
+rm <- rm_train & rm_test & rm_valid 
+training <- training[,!rm]
+testing <- testing[,!rm]
+validation <- validation[,!rm]
+```
+
+####Remove #DIV/0! from Data and Class Data 
+If we see the class of our data, we will find there are 30+ factor variables. However, we know we only have two factor variables--user_name and classe. So what happened? It turns out that some of our varibles have several "#DIV/0!" which is common mistake in Excel. R mistaknly thought the varible that has "#DIV/0!" as a factor variable which might cause further errors. Furthermore, we will turn all the variable into numeric except for the "classe" varible.  
+```{r, eval = FALSE}
+remove_div <- function(dataset, outcome){
+    classes <- sapply(dataset, class)
+    DIVs <- sapply(dataset[,which(classes == "factor")], function(dat) sapply(dat, function(x)
+        grepl("#DIV/0!",x)))
+    DIV_RM <- which(rowSums(DIVs) > 0)
+    dataset <- dataset[-DIV_RM,]
+    for(i in 1: (ncol(dataset)-1)){
+        dataset[,i] <- as.numeric(dataset[,i])
+    }
+    dataset
+}
+for(i in 1: (ncol(testing)-1)){
+    testing[,i] <- as.numeric(testing[,i])
+}
+training <- remove_div(training, classe)
+validation <- remove_div(validation, classe)
+
+```
+
+####Remove NAs from our data
+Besides, we can use sum(is.na()) function to see the distribution of NAs in our dataset. And we will delete those varibles which has more than 95% NA in itself.  
+```{r, eval = FALSE}
+na_testing_train <- sapply(training,function(dat) mean(is.na(dat)))
+na_testing_validation <- sapply(validation,function(dat) mean(is.na(dat)))
+na_testing_test <- sapply(testing,function(dat) mean(is.na(dat)))
+na_rm <- which(na_testing_train > 0.95 | na_testing_test > 0.95 | na_testing_validation > 0.95)
+training <- training[,-na_rm]
+testing <- testing[,-na_rm]
+validation <- validation[,-na_rm]
+```
+
+####Clean the Memory
+```{r,eval=FALSE}
+rm(path);rm(rm);rm(rm_test);rm(rm_train);rm(rm_valid);
+rm(na_rm);rm(na_testing_test);rm(na_testing_train);rm(na_testing_validation);
+```
+
+Ultimately, we have a cleaned data which can be further analyzed and predicted by machine learning techiques.
+
+##Practical Machine Learning
+
+###Control the machine learning by 10-fold Cross Validation
+We will use the 10-fold Cross Validation to tradeoff the bias and variance in all following machine learning models. 
+```{r, eval=FALSE}
+ctrol <- trainControl(method = "cv", number = 10)
+```
+
+###Create Several Machine Learning Models
+
+####Regular Prediction Tree
+Although we know a complex model like this might be highly unlikely classificated by simple prediction tree, we should try it anyway.
+
+```{r, eval=FALSE}
+mod1 <- train(classe ~ . , data = training, method = "rpart",trControl = ctrol)
+```
+
+####Boosting (GBM)
+Boosting is one of the most effective ways for us to get the accurate prediction model. So we will do that here.  
+```{r, eval=FALSE}
+mod2 <- train(classe ~ . , data = training, method = "gbm",trControl = ctrol,verbose = FALSE)
+```
+
+####Random Forest
+Random Forest is another useful technique for us to predict. However, the process might be very slow since it requires a lot of computation.  
+```{r, eval=FALSE}
+mod3 <- train(classe ~ ., data = training, method = "rf",trControl = ctrol)
+```
+
+####Bagging
+Bagging stands for Bootstapping aggregation which will require more memory. It's also effective for non-linear problems
+```{r, eval=FALSE}
+mod4 <- train(classe ~ ., data = training,method = "treebag",trControl = ctrol)
+```
+
+####Linear Dicriminant Analysis
+Lda is a quick and dirty way like the prediction tree, we will see it goes.
+```{r, eval=FALSE}
+mod5 <- train(classe ~ ., data = training, method = "lda",trControl = ctrol)
+```
+
+After training our computer with the above five models, we will see the estimated out sample error by applying them into the validation data set:  
+
+```{r, eval=FALSE}
+mod <- list(mod1, mod2, mod3, mod4, mod5)
+Accuracy <- numeric()
+for(i in 1:5){
+    Accuracy[i] <- confusionMatrix(predict(mod[[i]], validation), validation$classe)$overall[1]
+}
+```
+
+It turns out that their accuracies are **0.495, 0.976, 1, 1, 0.696** respectively, which satisfies our expectations about the effectiveness of those five models. What's more, we can notice the accuracy is incredibly high, so there seems no need for further improvement. However, we will stack those models together anyway.
+
+####Stack Models to Increase the Prediction Power
+We can simply stack the predicted values by those five models as follows:  
+
+```{r, eval=FALSE}
+#Ensemble Learning
+pred_train <- lapply(mod, function(model) predict(model, training))
+names(pred_train) <- c("model1","model2","model3","model4","model5") 
+pred_train$classe <- training$classe
+Stack_data <- as.data.frame(pred_train)
+comod <- train(classe ~ ., data = Stack_data, method = "rf",trControl = ctrol)
+
+#Prediction on validation dataset
+pred_validation <- lapply(mod, function(model) predict(model, validation))
+names(pred_validation) <- c("model1","model2","model3","model4","model5") 
+pred_validation$classe <- validation$classe
+Stack_data_validation <- as.data.frame(pred_validation)
+Accuracy[6] <- confusionMatrix(predict(comod, Stack_data_validation), validation$classe)$overall[1]
+```
+
+**After stacking them together, we notice that the ultimate accuracy rate is 100%. Wow!**
+
+###Make Prediction
+```{r, eval=FALSE}
+#Prediction on testing dataset
+pred_testing <- lapply(mod, function(model) predict(model, testing[, -ncol(testing)]))
+names(pred_testing) <- c("model1","model2","model3","model4","model5") 
+pred_testing$classe <- testing$problem_id
+Stack_data_testing <- as.data.frame(pred_testing)
+predict(comod, Stack_data_testing)
+```
+
+##Appendix: Data Resource
+
+###Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ¨C a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).  
+
+###Data
+
+The training data for this project are available here:  
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  
+
+The test data are available here:  
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv  
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.   
